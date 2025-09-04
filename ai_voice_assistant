@@ -1,0 +1,1553 @@
+import speech_recognition as sr
+import pyttsx3
+import requests
+import json
+import time
+import webbrowser
+import urllib.parse
+from datetime import datetime
+import subprocess
+import platform
+import socket
+import re
+import os
+import psutil
+from PIL import ImageGrab
+import random
+import threading
+
+
+class VoiceOllamaAssistant:
+    def __init__(self, model_name="llama3.2:1b", base_url="http://localhost:11434"):
+        """Initialize voice assistant with Ollama integration"""
+        print("Initializing DENNIS - Your Personal Voice Assistant...")
+
+        # Ollama settings
+        self.model_name = model_name
+        self.base_url = base_url
+
+        # Initialize speech components
+        self.recognizer = sr.Recognizer()
+        self.microphone = sr.Microphone()
+
+        # Improve speech recognition for Indian accents
+        self.recognizer.energy_threshold = 300
+        self.recognizer.dynamic_energy_threshold = True
+        self.recognizer.pause_threshold = 0.8
+        self.recognizer.phrase_threshold = 0.3
+
+        self.tts_engine = pyttsx3.init()
+
+        # Configure text-to-speech
+        voices = self.tts_engine.getProperty('voices')
+        if len(voices) > 1:
+            self.tts_engine.setProperty('voice', voices[1].id)
+        self.tts_engine.setProperty('rate', 180)
+        self.tts_engine.setProperty('volume', 0.9)
+
+        # API keys
+        self.weather_api_key = "a4937963deabd950ca8b414a387afab4"
+        self.news_api_key = "40e6aee1b781418083ce9010bdb65608"
+
+        # Initialize web applications database
+        self.initialize_web_apps()
+
+        # Start daily quote thread
+        self.start_daily_quote_thread()
+
+        print("DENNIS initialized successfully!")
+
+    # ===================== NEW FEATURES =====================
+    def get_random_recipe(self):
+        """Fetch a random recipe from MealDB API"""
+        try:
+            url = "https://www.themealdb.com/api/json/v1/1/random.php"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            recipe = response.json()["meals"][0]
+
+            # Format response
+            name = recipe["strMeal"]
+            category = recipe["strCategory"]
+            ingredients = []
+
+            for i in range(1, 21):
+                ingredient = recipe.get(f"strIngredient{i}", "")
+                measure = recipe.get(f"strMeasure{i}", "")
+                if ingredient and ingredient.strip():
+                    ingredients.append(f"{measure.strip()} {ingredient.strip()}")
+
+            # Get complete instructions
+            instructions = recipe["strInstructions"]
+            if instructions:
+                # Clean up the instructions but keep them complete
+                instructions = instructions.replace('\r\n', ' ').replace('\n', ' ')
+                instructions = ' '.join(instructions.split())  # Remove extra spaces
+
+                # Split into sentences for better formatting
+                sentences = instructions.split('. ')
+
+                # Take first 5-6 sentences for a complete cooking method
+                if len(sentences) >= 5:
+                    complete_instructions = '. '.join(sentences[:6]) + '.'
+                else:
+                    complete_instructions = instructions
+
+                # If still very long, limit to 400 characters but end at complete sentence
+                if len(complete_instructions) > 400:
+                    truncated = complete_instructions[:400]
+                    last_period = truncated.rfind('.')
+                    if last_period > 200:  # Make sure we have substantial content
+                        complete_instructions = truncated[:last_period + 1]
+                    else:
+                        complete_instructions = truncated + "..."
+            else:
+                complete_instructions = "Complete cooking instructions not available from this recipe source."
+
+            return (
+                f"Here's a delicious {name} recipe, which is a {category} dish. "
+                f"Ingredients you'll need: {', '.join(ingredients[:10])}. "
+                f"Complete cooking method: {complete_instructions} "
+                f"Enjoy making this wonderful dish!"
+            )
+        except Exception as e:
+            print(f"Recipe API error: {e}")
+            backup_recipes = [
+                "Here's a complete pasta recipe: Cook 200g pasta in salted boiling water for 8-10 minutes until al dente. Meanwhile, heat 2 tbsp olive oil in a pan, add 2 minced garlic cloves and cook for 1 minute. Add 400g diced tomatoes, salt, pepper, and fresh basil. Simmer for 10 minutes. Drain pasta and mix with sauce. Serve with grated cheese. Delicious and easy!",
+                "Complete rice dish recipe: Heat 2 tbsp oil in a pan. Add 1 diced onion and cook until golden. Add 1 cup rice and stir for 2 minutes. Add 2 cups hot stock or water, salt, and your choice of vegetables. Bring to boil, then simmer covered for 15-20 minutes until rice is tender. Let it rest for 5 minutes, then fluff with a fork. Perfect nutritious meal!",
+                "Simple sandwich recipe: Toast 2 slices of bread until golden. Spread butter or mayo on one side. Layer with lettuce, sliced tomatoes, cheese, and your favorite protein like ham or chicken. Add salt, pepper, and any other seasonings you like. Close with the second slice. Cut diagonally and enjoy your homemade sandwich!"
+            ]
+            return random.choice(backup_recipes)
+
+    def search_specific_recipe(self, dish_name):
+        """Search for a specific recipe by name"""
+        try:
+            # Try exact search first
+            url = f"https://www.themealdb.com/api/json/v1/1/search.php?s={dish_name}"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            if data["meals"]:
+                recipe = data["meals"][0]
+                name = recipe["strMeal"]
+                category = recipe["strCategory"]
+                ingredients = []
+
+                for i in range(1, 21):
+                    ingredient = recipe.get(f"strIngredient{i}", "")
+                    measure = recipe.get(f"strMeasure{i}", "")
+                    if ingredient and ingredient.strip():
+                        ingredients.append(f"{measure.strip()} {ingredient.strip()}")
+
+                # Get complete instructions - don't cut them off
+                instructions = recipe["strInstructions"]
+                if instructions:
+                    # Clean up the instructions but keep them complete
+                    instructions = instructions.replace('\r\n', ' ').replace('\n', ' ')
+                    instructions = ' '.join(instructions.split())  # Remove extra spaces
+
+                    # Split into sentences for better formatting
+                    sentences = instructions.split('. ')
+
+                    # Take first 5-6 sentences for a complete cooking method
+                    if len(sentences) >= 5:
+                        complete_instructions = '. '.join(sentences[:6]) + '.'
+                    else:
+                        complete_instructions = instructions
+
+                    # If still very long, limit to 400 characters but end at complete sentence
+                    if len(complete_instructions) > 400:
+                        truncated = complete_instructions[:400]
+                        last_period = truncated.rfind('.')
+                        if last_period > 200:  # Make sure we have substantial content
+                            complete_instructions = truncated[:last_period + 1]
+                        else:
+                            complete_instructions = truncated + "..."
+                else:
+                    complete_instructions = "Complete instructions not available from this recipe source."
+
+                return (
+                    f"Here's the complete {name} recipe: "
+                    f"Ingredients you need: {', '.join(ingredients[:10])}. "
+                    f"Full cooking method: {complete_instructions} "
+                    f"This is a {category} dish. Enjoy your cooking!"
+                )
+            else:
+                # Try alternative searches for common dishes
+                alternatives = {
+                    'chicken curry': ['chicken', 'curry'],
+                    'biryani': ['chicken biryani', 'rice'],
+                    'pasta': ['spaghetti', 'pasta'],
+                    'pizza': ['margherita', 'pizza'],
+                    'soup': ['chicken soup', 'tomato soup'],
+                    'rice': ['fried rice', 'pilaf'],
+                    'fish curry': ['fish', 'curry'],
+                    'dal': ['lentil', 'dal'],
+                    'paneer': ['paneer', 'cheese']
+                }
+
+                # Try to find alternative search terms
+                for key, alts in alternatives.items():
+                    if key in dish_name.lower():
+                        for alt in alts:
+                            alt_url = f"https://www.themealdb.com/api/json/v1/1/search.php?s={alt}"
+                            alt_response = requests.get(alt_url, timeout=5)
+                            alt_data = alt_response.json()
+
+                            if alt_data["meals"]:
+                                recipe = alt_data["meals"][0]
+                                name = recipe["strMeal"]
+                                ingredients = []
+
+                                for i in range(1, 21):
+                                    ingredient = recipe.get(f"strIngredient{i}", "")
+                                    measure = recipe.get(f"strMeasure{i}", "")
+                                    if ingredient and ingredient.strip():
+                                        ingredients.append(f"{measure.strip()} {ingredient.strip()}")
+
+                                instructions = recipe["strInstructions"]
+                                if instructions:
+                                    instructions = instructions.replace('\r\n', ' ').replace('\n', ' ')
+                                    instructions = ' '.join(instructions.split())
+
+                                    sentences = instructions.split('. ')
+                                    if len(sentences) >= 5:
+                                        complete_instructions = '. '.join(sentences[:6]) + '.'
+                                    else:
+                                        complete_instructions = instructions
+
+                                    if len(complete_instructions) > 400:
+                                        truncated = complete_instructions[:400]
+                                        last_period = truncated.rfind('.')
+                                        if last_period > 200:
+                                            complete_instructions = truncated[:last_period + 1]
+                                        else:
+                                            complete_instructions = truncated + "..."
+                                else:
+                                    complete_instructions = "Complete instructions not available."
+
+                                return (
+                                    f"I found a great {name} recipe for you: "
+                                    f"Ingredients needed: {', '.join(ingredients[:10])}. "
+                                    f"Complete cooking method: {complete_instructions} "
+                                    f"Enjoy making this delicious dish!"
+                                )
+
+                # If no alternatives found, provide a basic recipe
+                if 'chicken curry' in dish_name.lower():
+                    return (
+                        "Here's a complete chicken curry recipe: "
+                        "Ingredients: 500g chicken pieces, 2 onions chopped, 3 garlic cloves minced, 1 inch ginger grated, "
+                        "2 tomatoes chopped, 1 tsp turmeric, 2 tsp curry powder, 1 tsp cumin, salt, 3 tbsp oil, fresh cilantro. "
+                        "Complete method: Heat oil in a pan. Sauté onions until golden brown. Add ginger-garlic paste and cook for 2 minutes. "
+                        "Add all spices and cook for 1 minute. Add tomatoes and cook until they break down and become saucy. "
+                        "Add chicken pieces and mix well. Cover and cook for 20-25 minutes until chicken is fully cooked. "
+                        "Garnish with fresh cilantro and serve hot with rice or bread. Adjust salt and spices to taste."
+                    )
+                else:
+                    # Fallback to random recipe
+                    return f"I couldn't find a specific recipe for {dish_name}, but here's a great alternative: " + self.get_random_recipe()
+
+        except Exception as e:
+            print(f"Specific recipe search error: {e}")
+            # Provide helpful fallback based on dish type
+            if 'chicken curry' in dish_name.lower():
+                return (
+                    "Here's a complete chicken curry recipe: "
+                    "Heat oil, sauté onions until golden, add ginger-garlic paste, then spices like turmeric and curry powder. "
+                    "Add tomatoes and cook until soft, add chicken pieces and cook covered for 20-25 minutes until fully cooked. "
+                    "Season with salt, garnish with cilantro, and serve with rice or bread. Delicious homemade curry ready!"
+                )
+            else:
+                return f"I couldn't fetch a complete recipe for {dish_name} right now. Would you like a random recipe instead?"
+
+    def get_zen_quote(self):
+        """Fetch a random quote from ZenQuotes API"""
+        try:
+            response = requests.get("https://zenquotes.io/api/random", timeout=10)
+            response.raise_for_status()
+            data = response.json()[0]
+            return f"Here's an inspiring quote: {data['q']} — {data['a']}"
+        except Exception as e:
+            print(f"Quote API error: {e}")
+            backup_quotes = [
+                "The only way to do great work is to love what you do. — Steve Jobs",
+                "Life is what happens when you're busy making other plans. — John Lennon",
+                "The future belongs to those who believe in the beauty of their dreams. — Eleanor Roosevelt",
+                "Success is not final, failure is not fatal: it is the courage to continue that counts. — Winston Churchill",
+                "The only impossible journey is the one you never begin. — Tony Robbins"
+            ]
+            return f"Here's an inspiring quote: {random.choice(backup_quotes)}"
+
+    def start_daily_quote_thread(self):
+        """Run daily quote at 8 AM in background"""
+
+        def quote_scheduler():
+            last_quote_day = None
+            while True:
+                try:
+                    now = datetime.now()
+                    current_day = now.date()
+
+                    # Check if it's 8 AM and we haven't given a quote today
+                    if (now.hour == 8 and now.minute == 0 and
+                            last_quote_day != current_day):
+                        quote = self.get_zen_quote()
+                        self.speak(f"Good morning! {quote}")
+                        last_quote_day = current_day
+
+                    time.sleep(60)  # Check every minute
+                except Exception as e:
+                    print(f"Daily quote thread error: {e}")
+                    time.sleep(300)  # Wait 5 minutes on error
+
+        thread = threading.Thread(target=quote_scheduler)
+        thread.daemon = True
+        thread.start()
+
+    # ===================== EXISTING METHODS (ALL PRESERVED) =====================
+    def initialize_web_apps(self):
+        """Initialize comprehensive web applications database"""
+        self.web_apps = {
+            # Google Services
+            'gmail': 'https://mail.google.com',
+            'google mail': 'https://mail.google.com',
+            'email': 'https://mail.google.com',
+            'google drive': 'https://drive.google.com',
+            'drive': 'https://drive.google.com',
+            'google docs': 'https://docs.google.com',
+            'docs': 'https://docs.google.com',
+            'google sheets': 'https://sheets.google.com',
+            'sheets': 'https://sheets.google.com',
+            'google slides': 'https://slides.google.com',
+            'slides': 'https://slides.google.com',
+            'google calendar': 'https://calendar.google.com',
+            'calendar': 'https://calendar.google.com',
+            'google maps': 'https://maps.google.com',
+            'maps': 'https://maps.google.com',
+            'google photos': 'https://photos.google.com',
+            'photos': 'https://photos.google.com',
+            'google meet': 'https://meet.google.com',
+            'meet': 'https://meet.google.com',
+            'google classroom': 'https://classroom.google.com',
+            'classroom': 'https://classroom.google.com',
+            'google translate': 'https://translate.google.com',
+            'translate web': 'https://translate.google.com',
+
+            # Video Platforms
+            'youtube': 'https://www.youtube.com',
+            'you tube': 'https://www.youtube.com',
+            'netflix': 'https://www.netflix.com',
+            'amazon prime': 'https://www.primevideo.com',
+            'prime video': 'https://www.primevideo.com',
+            'hotstar': 'https://www.hotstar.com',
+            'disney plus': 'https://www.disneyplus.com',
+            'vimeo': 'https://vimeo.com',
+            'twitch': 'https://www.twitch.tv',
+
+            # Social Media
+            'facebook': 'https://www.facebook.com',
+            'instagram': 'https://www.instagram.com',
+            'twitter': 'https://www.twitter.com',
+            'x': 'https://www.x.com',
+            'linkedin': 'https://www.linkedin.com',
+            'whatsapp web': 'https://web.whatsapp.com',
+            'whatsapp': 'https://web.whatsapp.com',
+            'telegram web': 'https://web.telegram.org',
+            'snapchat': 'https://web.snapchat.com',
+            'reddit': 'https://www.reddit.com',
+            'pinterest': 'https://www.pinterest.com',
+            'tiktok': 'https://www.tiktok.com',
+
+            # Microsoft Services
+            'outlook': 'https://outlook.live.com',
+            'outlook web': 'https://outlook.office.com',
+            'office 365': 'https://www.office.com',
+            'office': 'https://www.office.com',
+            'onedrive': 'https://onedrive.live.com',
+            'teams web': 'https://teams.microsoft.com',
+            'microsoft teams web': 'https://teams.microsoft.com',
+
+            # Development & Work Tools
+            'github': 'https://github.com',
+            'gitlab': 'https://gitlab.com',
+            'stackoverflow': 'https://stackoverflow.com',
+            'stack overflow': 'https://stackoverflow.com',
+            'codepen': 'https://codepen.io',
+            'replit': 'https://replit.com',
+            'figma': 'https://www.figma.com',
+            'canva': 'https://www.canva.com',
+            'notion': 'https://www.notion.so',
+            'trello': 'https://trello.com',
+            'slack web': 'https://slack.com',
+            'discord web': 'https://discord.com/app',
+            'zoom web': 'https://zoom.us/signin',
+
+            # Music & Audio
+            'spotify web': 'https://open.spotify.com',
+            'soundcloud': 'https://soundcloud.com',
+            'gaana': 'https://gaana.com',
+            'jiosaavn': 'https://www.jiosaavn.com',
+            'wynk music': 'https://wynk.in',
+            'apple music': 'https://music.apple.com',
+
+            # Shopping
+            'amazon': 'https://www.amazon.com',
+            'flipkart': 'https://www.flipkart.com',
+            'myntra': 'https://www.myntra.com',
+            'ebay': 'https://www.ebay.com',
+            'aliexpress': 'https://www.aliexpress.com',
+
+            # News & Information
+            'bbc': 'https://www.bbc.com',
+            'cnn': 'https://www.cnn.com',
+            'times of india': 'https://timesofindia.indiatimes.com',
+            'hindu': 'https://www.thehindu.com',
+            'wikipedia': 'https://www.wikipedia.org',
+
+            # Banking & Finance
+            'sbi online': 'https://www.onlinesbi.sbi',
+            'hdfc netbanking': 'https://netbanking.hdfcbank.com',
+            'icici netbanking': 'https://www.icicibank.com',
+            'paytm': 'https://paytm.com',
+            'phonepe web': 'https://www.phonepe.com',
+            'google pay': 'https://pay.google.com',
+
+            # Education
+            'coursera': 'https://www.coursera.org',
+            'udemy': 'https://www.udemy.com',
+            'khan academy': 'https://www.khanacademy.org',
+            'edx': 'https://www.edx.org',
+            'byjus': 'https://byjus.com',
+            'unacademy': 'https://unacademy.com',
+
+            # AI Tools
+            'chatgpt': 'https://chat.openai.com',
+            'claude': 'https://claude.ai',
+            'bard': 'https://bard.google.com',
+            'copilot': 'https://copilot.microsoft.com'
+        }
+
+        # Create aliases for easier recognition
+        self.web_app_aliases = {
+            'yt': 'youtube',
+            'fb': 'facebook',
+            'ig': 'instagram',
+            'li': 'linkedin',
+            'wa': 'whatsapp',
+            'gpt': 'chatgpt',
+            'chat gpt': 'chatgpt',
+            'openai': 'chatgpt'
+        }
+
+    def open_web_application(self, app_name):
+        """Open web application in browser with intelligent matching"""
+        try:
+            app_name = app_name.lower().strip()
+            print(f" Opening web app: {app_name}")
+
+            # Check aliases first
+            if app_name in self.web_app_aliases:
+                original = app_name
+                app_name = self.web_app_aliases[app_name]
+                print(f" Alias: '{original}' → '{app_name}'")
+
+            # Direct match
+            if app_name in self.web_apps:
+                url = self.web_apps[app_name]
+                print(f" Opening browser: {url}")
+                webbrowser.open(url)
+                return f"Opening {app_name.title()} in your browser"
+
+            # Fuzzy matching for partial names
+            matches = []
+            for web_app in self.web_apps.keys():
+                if app_name in web_app or any(word in web_app for word in app_name.split()):
+                    matches.append(web_app)
+
+            if matches:
+                best_match = min(matches, key=len)
+                url = self.web_apps[best_match]
+                print(f"Found match: '{app_name}' → '{best_match}' at {url}")
+                webbrowser.open(url)
+                return f"Opening {best_match.title()} in your browser"
+
+            return f"Web app {app_name} not found"
+
+        except Exception as e:
+            print(f"Web app error: {e}")
+            return f"Sorry, I couldn't open {app_name}: {str(e)}"
+
+    def get_available_web_apps(self):
+        """Get list of available web applications"""
+        categories = {
+            'Google Services': ['gmail', 'drive', 'docs', 'sheets', 'calendar', 'maps', 'meet'],
+            'Social Media': ['facebook', 'instagram', 'twitter', 'linkedin', 'whatsapp'],
+            'Video Platforms': ['youtube', 'netflix', 'prime video', 'hotstar'],
+            'Music Platforms': ['spotify web', 'soundcloud', 'gaana', 'jiosaavn'],
+            'Work Tools': ['github', 'figma', 'canva', 'notion', 'trello'],
+            'AI Tools': ['chatgpt', 'claude', 'bard', 'copilot']
+        }
+
+        response = "I can open these web applications:\n"
+        for category, apps in categories.items():
+            response += f"\n{category}: {', '.join(apps[:5])}"
+            if len(apps) > 5:
+                response += f" and {len(apps) - 5} more"
+
+        response += "\n\nJust say 'open' followed by any app name!"
+        return response
+
+    def extract_city_from_text(self, text):
+        """Extract city name from weather query"""
+        text = text.lower().strip()
+        print(f"Extracting city from: '{text}'")
+
+        # Remove common weather words
+        weather_words = ['weather', 'temperature', 'climate', 'what', 'is', 'the', 'in', 'for', 'at', 'whats', 'today']
+        words = text.split()
+        city_words = []
+
+        for word in words:
+            if word not in weather_words:
+                city_words.append(word)
+
+        if city_words:
+            city = ' '.join(city_words).title()
+            print(f"Extracted city: '{city}'")
+            return city
+        else:
+            print("No city found, using default: Bengaluru")
+            return "Bengaluru"
+
+    def check_ollama_connection(self):
+        """Check if Ollama server is running"""
+        try:
+            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            return response.status_code == 200
+        except requests.exceptions.RequestException:
+            return False
+
+    def query_ollama(self, prompt):
+        """Send a query to Ollama and get response"""
+        if not self.check_ollama_connection():
+            return "Error: Cannot connect to Ollama server. Make sure Ollama is running with 'ollama serve'"
+
+        url = f"{self.base_url}/api/generate"
+
+        payload = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.7,
+                "num_predict": 100
+            }
+        }
+
+        try:
+            print("Asking Ollama...")
+            response = requests.post(url, json=payload, timeout=30)
+            response.raise_for_status()
+
+            result = response.json()
+            return result.get("response", "No response received")
+
+        except requests.exceptions.Timeout:
+            return "Sorry, the request timed out. Please try again."
+        except requests.exceptions.RequestException as e:
+            return f"Error connecting to Ollama: {str(e)}"
+        except json.JSONDecodeError:
+            return "Error: Invalid response from Ollama"
+
+    def get_weather_fallback(self, city="Bengaluru"):
+        """Fallback weather using free service"""
+        try:
+            url = f"https://wttr.in/{city}?format=j1"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+
+            data = response.json()
+
+            current = data["current_condition"][0]
+            temp = current["temp_C"]
+            feels_like = current["FeelsLikeC"]
+            description = current["weatherDesc"][0]["value"].lower()
+            humidity = current["humidity"]
+
+            weather_report = f"Current weather in {city}: {temp} degrees celsius, feels like {feels_like} degrees. {description} with {humidity}% humidity."
+            return weather_report
+
+        except Exception as e:
+            print(f"Fallback weather error: {e}")
+            return f"Sorry, I couldn't get weather information for {city} right now."
+
+    def get_weather(self, city="Bengaluru"):
+        """Get current weather information"""
+        try:
+            url = "https://api.openweathermap.org/data/2.5/weather"
+            params = {
+                "q": city,
+                "appid": self.weather_api_key,
+                "units": "metric"
+            }
+
+            print(f"Getting weather for {city}...")
+            response = requests.get(url, params=params, timeout=10)
+
+            if response.status_code == 401:
+                print("OpenWeatherMap API key invalid, trying fallback service...")
+                return self.get_weather_fallback(city)
+
+            response.raise_for_status()
+            data = response.json()
+
+            temp = round(data["main"]["temp"])
+            feels_like = round(data["main"]["feels_like"])
+            description = data["weather"][0]["description"]
+            humidity = data["main"]["humidity"]
+
+            weather_report = f"Current weather in {city}: {temp} degrees celsius, feels like {feels_like} degrees. {description} with {humidity}% humidity."
+            return weather_report
+
+        except requests.exceptions.RequestException as e:
+            print(f"Weather API error: {e}, trying fallback...")
+            return self.get_weather_fallback(city)
+        except KeyError as e:
+            print(f"Weather data parsing error: {e}, trying fallback...")
+            return self.get_weather_fallback(city)
+        except Exception as e:
+            print(f"Unexpected weather error: {e}")
+            return "Weather service error occurred"
+
+    def get_current_time(self):
+        """Get current time"""
+        now = datetime.now()
+        time_str = now.strftime("%I:%M %p")
+        date_str = now.strftime("%A, %B %d, %Y")
+        return f"The current time is {time_str} on {date_str}"
+
+    def play_spotify_song(self, song_query):
+        """Play song on Spotify (opens in browser)"""
+        try:
+            encoded_query = urllib.parse.quote(song_query)
+            spotify_url = f"https://open.spotify.com/search/{encoded_query}"
+            webbrowser.open(spotify_url)
+            return f"Opening Spotify to search for: {song_query}"
+        except Exception as e:
+            return f"Sorry, I couldn't open Spotify: {str(e)}"
+
+    def get_news_headlines(self):
+        """Get latest news headlines"""
+        try:
+            url = "https://newsapi.org/v2/top-headlines"
+            params = {
+                "country": "in",
+                "pageSize": 3,
+                "apiKey": self.news_api_key
+            }
+
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+
+            data = response.json()
+            articles = data.get("articles", [])
+
+            if articles:
+                headlines = []
+                for i, article in enumerate(articles[:3], 1):
+                    headlines.append(f"{i}. {article['title']}")
+
+                return "Here are the top news headlines: " + ". ".join(headlines)
+            else:
+                return "No news articles found"
+
+        except Exception as e:
+            return "Sorry, I couldn't get the news right now"
+
+    def get_battery_status(self):
+        """Get current battery level"""
+        try:
+            try:
+                battery = psutil.sensors_battery()
+                if battery:
+                    percent = round(battery.percent)
+                    plugged = "charging" if battery.power_plugged else "on battery power"
+
+                    if percent < 20:
+                        return f"Battery critically low at {percent}% and {plugged}. Please charge soon!"
+                    elif percent < 50:
+                        return f"Battery at {percent}% and {plugged}"
+                    else:
+                        return f"Battery level is good at {percent}% and {plugged}"
+                else:
+                    return "Battery information not available on this device"
+            except ImportError:
+                if platform.system() == "Windows":
+                    result = subprocess.run(
+                        ['wmic', 'path', 'win32_battery', 'get', 'estimatedchargeremaining'],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    if result.returncode == 0:
+                        lines = result.stdout.strip().split('\n')
+                        for line in lines:
+                            if line.strip().isdigit():
+                                percent = int(line.strip())
+                                return f"Battery level is {percent}%"
+
+                return "Battery information not available"
+
+        except Exception as e:
+            print(f"Battery check error: {e}")
+            return "Sorry, I couldn't check the battery level"
+
+    def get_network_info(self):
+        """Get network and IP information"""
+        try:
+            hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(hostname)
+
+            try:
+                response = requests.get('https://api.ipify.org?format=json', timeout=5)
+                public_ip = response.json()['ip']
+                return f"Your local IP is {local_ip} and public IP is {public_ip}"
+            except:
+                return f"Your local IP address is {local_ip}. Cannot reach internet to get public IP"
+
+        except Exception as e:
+            print(f"Network info error: {e}")
+            return "Sorry, I couldn't get network information"
+
+    def control_volume(self, action):
+        """Control system volume"""
+        try:
+            system = platform.system()
+
+            if system == "Windows":
+                if action == "up":
+                    subprocess.run(['powershell', '-c',
+                                    '(New-Object -comObject WScript.Shell).SendKeys([char]175)'],
+                                   timeout=5)
+                    return "Volume increased"
+                elif action == "down":
+                    subprocess.run(['powershell', '-c',
+                                    '(New-Object -comObject WScript.Shell).SendKeys([char]174)'],
+                                   timeout=5)
+                    return "Volume decreased"
+                elif action == "mute":
+                    subprocess.run(['powershell', '-c',
+                                    '(New-Object -comObject WScript.Shell).SendKeys([char]173)'],
+                                   timeout=5)
+                    return "Volume muted or unmuted"
+            else:
+                return f"Volume control not fully supported on {system}"
+
+        except Exception as e:
+            print(f"Volume control error: {e}")
+            return "Sorry, I couldn't control the volume"
+
+    def take_screenshot(self):
+        """Take a screenshot and save it"""
+        try:
+            screenshot_dir = "screenshots"
+            if not os.path.exists(screenshot_dir):
+                os.makedirs(screenshot_dir)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{screenshot_dir}/screenshot_{timestamp}.png"
+
+            screenshot = ImageGrab.grab()
+            screenshot.save(filename)
+
+            return f"Screenshot saved as {filename}"
+
+        except Exception as e:
+            return f"Sorry, I couldn't take a screenshot: {str(e)}"
+
+    def get_system_stats(self):
+        """Get comprehensive system statistics"""
+        try:
+            cpu_percent = psutil.cpu_percent(interval=1)
+
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
+            memory_available = round(memory.available / (1024 ** 3), 1)
+
+            disk = psutil.disk_usage('/')
+            disk_percent = (disk.used / disk.total) * 100
+            disk_free = round(disk.free / (1024 ** 3), 1)
+
+            stats_report = f"System Statistics: CPU usage {cpu_percent}%, Memory usage {memory_percent}% with {memory_available} GB available, Disk usage {disk_percent:.1f}% with {disk_free} GB free space."
+
+            return stats_report
+
+        except Exception as e:
+            return f"Sorry, I couldn't get system statistics: {str(e)}"
+
+    def open_application(self, app_name):
+        """Enhanced application launcher - checks web apps first, then desktop apps"""
+        try:
+            system = platform.system()
+            app_name = app_name.lower().strip()
+
+            print(f"Trying to open: {app_name}")
+
+            # STEP 1: Check if it's a web application FIRST
+            if app_name in self.web_apps or app_name in self.web_app_aliases:
+                print(f" Found web app: {app_name}")
+                return self.open_web_application(app_name)
+
+            # STEP 2: Check for fuzzy web app matches
+            web_matches = []
+            for web_app in self.web_apps.keys():
+                if app_name in web_app or any(word in web_app.split() for word in app_name.split()):
+                    web_matches.append(web_app)
+
+            if web_matches:
+                best_match = min(web_matches, key=len)
+                print(f" Found fuzzy web app match: '{app_name}' → '{best_match}'")
+                return self.open_web_application(best_match)
+
+            # STEP 3: Try desktop applications
+            print(f" No web app found, trying desktop app: {app_name}")
+
+            if system == "Windows":
+                windows_apps = {
+                    'calculator': 'calc.exe',
+                    'calc': 'calc.exe',
+                    'notepad': 'notepad.exe',
+                    'paint': 'mspaint.exe',
+                    'wordpad': 'write.exe',
+                    'file manager': 'explorer.exe',
+                    'file explorer': 'explorer.exe',
+                    'explorer': 'explorer.exe',
+                    'files': 'explorer.exe',
+                    'folder': 'explorer.exe',
+                    'task manager': 'taskmgr.exe',
+                    'control panel': 'control.exe',
+                    'device manager': 'devmgmt.msc',
+                    'system information': 'msinfo32.exe',
+                    'registry editor': 'regedit.exe',
+                    'command prompt': 'cmd.exe',
+                    'cmd': 'cmd.exe',
+                    'powershell': 'powershell.exe',
+                    'media player': 'wmplayer.exe',
+                    'windows media player': 'wmplayer.exe',
+                    'sound recorder': 'soundrecorder.exe',
+                    'camera': 'microsoft.windows.camera:',
+                    'photos': 'ms-photos:',
+                    'mail': 'hxmail.exe',
+                    'calendar': 'hxcalendarappimm.exe',
+                    'browser': 'start chrome',
+                    'chrome': 'start chrome',
+                    'google chrome': 'start chrome',
+                    'edge': 'start msedge',
+                    'microsoft edge': 'start msedge',
+                    'firefox': 'start firefox',
+                    'internet explorer': 'iexplore.exe',
+                    'word': 'winword.exe',
+                    'microsoft word': 'winword.exe',
+                    'excel': 'excel.exe',
+                    'microsoft excel': 'excel.exe',
+                    'powerpoint': 'powerpnt.exe',
+                    'microsoft powerpoint': 'powerpnt.exe',
+                    'outlook': 'outlook.exe',
+                    'microsoft outlook': 'outlook.exe',
+                    'teams': 'ms-teams:',
+                    'microsoft teams': 'ms-teams:',
+                    'visual studio code': 'code.exe',
+                    'vscode': 'code.exe',
+                    'vs code': 'code.exe',
+                    'pycharm': 'pycharm64.exe',
+                    'visual studio': 'devenv.exe',
+                    'git bash': 'git-bash.exe',
+                    'github desktop': 'githubdesktop.exe',
+                    'adobe photoshop': 'photoshop.exe',
+                    'photoshop': 'photoshop.exe',
+                    'adobe premiere': 'adobe premiere pro.exe',
+                    'premiere': 'adobe premiere pro.exe',
+                    'after effects': 'afterfx.exe',
+                    'illustrator': 'illustrator.exe',
+                    'discord': 'discord.exe',
+                    'slack': 'slack.exe',
+                    'zoom': 'zoom.exe',
+                    'skype': 'skype.exe',
+                    'whatsapp': 'whatsapp.exe',
+                    'telegram': 'telegram.exe',
+                    'spotify': 'spotify.exe',
+                    'vlc': 'vlc.exe',
+                    'vlc media player': 'vlc.exe',
+                    'steam': 'steam.exe',
+                    'epic games': 'epicgameslauncher.exe',
+                    'winrar': 'winrar.exe',
+                    '7zip': '7zfm.exe',
+                    'antivirus': 'av.exe',
+                    'ccleaner': 'ccleaner64.exe',
+                    'malwarebytes': 'mbam.exe',
+                    'adobe reader': 'acrord32.exe',
+                    'acrobat': 'acrobat.exe',
+                    'adobe acrobat': 'acrobat.exe',
+                    'settings': 'ms-settings:',
+                    'windows settings': 'ms-settings:',
+                    'display settings': 'ms-settings:display',
+                    'sound settings': 'ms-settings:sound',
+                    'network settings': 'ms-settings:network',
+                    'itunes': 'itunes.exe',
+                    'vmware': 'vmware.exe',
+                    'virtualbox': 'virtualbox.exe',
+                    'teamviewer': 'teamviewer.exe',
+                    'anydesk': 'anydesk.exe'
+                }
+
+                if app_name in windows_apps:
+                    command = windows_apps[app_name]
+                    try:
+                        if command.startswith('start '):
+                            subprocess.Popen(command, shell=True)
+                        elif command.startswith('ms-') or command.endswith(':'):
+                            subprocess.Popen(['start', command], shell=True)
+                        else:
+                            subprocess.Popen(command, shell=True)
+                        return f"Opening {app_name.title()}"
+                    except Exception:
+                        pass
+
+                # Generic approach - try to start any application
+                try:
+                    subprocess.Popen(f"{app_name}.exe", shell=True)
+                    return f"Opening {app_name.title()}"
+                except Exception:
+                    try:
+                        subprocess.Popen(f"start {app_name}", shell=True)
+                        return f"Opening {app_name.title()}"
+                    except Exception:
+                        try:
+                            common_paths = [
+                                f"C:\\Program Files\\{app_name}\\{app_name}.exe",
+                                f"C:\\Program Files (x86)\\{app_name}\\{app_name}.exe",
+                                f"C:\\Windows\\System32\\{app_name}.exe"
+                            ]
+
+                            for path in common_paths:
+                                if os.path.exists(path):
+                                    subprocess.Popen(path)
+                                    return f"Opening {app_name.title()}"
+
+                            subprocess.Popen(['powershell', '-c', f'Start-Process "{app_name}"'], shell=True)
+                            return f"Attempting to open {app_name.title()}"
+
+                        except Exception:
+                            return f"Sorry, I couldn't find or open {app_name}. Make sure it's installed."
+
+            else:
+                return f"Application launcher is optimized for Windows. Current system: {system}"
+
+        except Exception as e:
+            print(f"App launcher error: {e}")
+            return f"Sorry, I couldn't open {app_name}: {str(e)}"
+
+    def list_desktop_files(self):
+        """List files on desktop"""
+        try:
+            desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+
+            if os.path.exists(desktop_path):
+                files = os.listdir(desktop_path)
+
+                if files:
+                    file_list = files[:5]
+                    file_names = ", ".join(file_list)
+
+                    if len(files) > 5:
+                        return f"Desktop files include: {file_names}, and {len(files) - 5} more files"
+                    else:
+                        return f"Desktop files: {file_names}"
+                else:
+                    return "Your desktop is empty"
+            else:
+                return "Desktop folder not found"
+
+        except Exception as e:
+            return f"Sorry, I couldn't access desktop files: {str(e)}"
+
+    def get_stock_price(self, stock_query):
+        """Get current stock price with demo data"""
+        try:
+            stock_query = stock_query.lower()
+
+            remove_words = ['stock', 'price', 'share', 'what', 'is', 'the', 'of', 'check']
+            for word in remove_words:
+                stock_query = stock_query.replace(word, '')
+
+            stock_query = stock_query.strip()
+
+            mock_prices = {
+                'reliance': {'price': 2456.75, 'change': 12.30},
+                'tcs': {'price': 3342.80, 'change': -25.60},
+                'infosys': {'price': 1456.90, 'change': 8.45},
+                'nifty': {'price': 19850.33, 'change': 125.75}
+            }
+
+            key = next((k for k in mock_prices.keys() if k in stock_query), None)
+
+            if key:
+                data = mock_prices[key]
+                price = data['price']
+                change = data['change']
+
+                trend = f"up by {abs(change):.2f} rupees" if change >= 0 else f"down by {abs(change):.2f} rupees"
+
+                return f"{key.title()} is approximately {price:.2f} rupees, {trend}"
+            else:
+                return f"Stock data for {stock_query} is not available"
+
+        except Exception as e:
+            return "Sorry, I couldn't get stock information"
+
+    def get_currency_rate(self, from_currency="USD", to_currency="INR", amount=1):
+        """Get currency exchange rate"""
+        try:
+            url = f"https://api.exchangerate-api.com/v4/latest/{from_currency.upper()}"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+
+            data = response.json()
+
+            if to_currency.upper() in data['rates']:
+                rate = data['rates'][to_currency.upper()]
+                return f"1 {from_currency.upper()} equals {rate:.2f} {to_currency.upper()}"
+            else:
+                return f"Sorry, I couldn't find exchange rate for {to_currency.upper()}"
+
+        except Exception as e:
+            return "Sorry, I couldn't get currency exchange rates right now"
+
+    def translate_text(self, text, target_language):
+        """Translate text with built-in accurate translations"""
+        try:
+            common_translations = {
+                ('good morning', 'Hindi'): 'सुप्रभात (Suprabhat)',
+                ('good morning', 'Tamil'): 'காலை வணக்கம் (Kalai Vanakkam)',
+                ('good morning', 'Kannada'): 'ಶುಭೋದಯ (Shubhodaya)',
+                ('hello', 'Hindi'): 'नमस्ते (Namaste)',
+                ('hello', 'Tamil'): 'வணக்கம் (Vanakkam)',
+                ('hello', 'Kannada'): 'ನಮಸ್ಕಾರ (Namaskara)',
+                ('thank you', 'Hindi'): 'धन्यवाद (Dhanyawad)',
+                ('thank you', 'Tamil'): 'நன்றி (Nandri)',
+                ('thank you', 'Kannada'): 'ಧನ್ಯವಾದ (Dhanyavada)'
+            }
+
+            key = (text.lower(), target_language)
+            if key in common_translations:
+                return f"Translation to {target_language}: {common_translations[key]}"
+            else:
+                prompt = f"Translate '{text}' to {target_language}. Provide only the translation:"
+                response = self.query_ollama(prompt)
+                return f"Translation to {target_language}: {response.strip()}"
+
+        except Exception as e:
+            return "Sorry, I couldn't perform the translation"
+
+    def help_with_writing(self, writing_type, topic=""):
+        """Help with writing using Ollama AI"""
+        try:
+            if writing_type == "email":
+                prompt = f"Write a professional email about: {topic}. Make it polite, clear, and concise."
+            elif writing_type == "poem":
+                prompt = f"Write a short, beautiful poem about: {topic}. Make it creative and meaningful."
+            else:
+                prompt = f"Help me write a {writing_type} about: {topic}."
+
+            response = self.query_ollama(prompt)
+            return f"Here's your {writing_type}: {response.strip()}"
+
+        except Exception as e:
+            return f"Sorry, I couldn't help write that {writing_type}"
+
+    def handle_real_time_commands(self, text):
+        """Handle all real-time commands with enhanced web app support and NEW FEATURES"""
+        text_lower = text.lower()
+        text_normalized = text_lower.replace("increse", "increase").replace("decrese", "decrease")
+
+        # ===================== RECIPE COMMANDS (HIGH PRIORITY) =====================
+        # Check for ANY recipe-related words first to prevent going to Ollama
+        recipe_keywords = ['recipe', 'cook', 'cooking', 'make', 'dish', 'food', 'meal', 'kitchen',
+                           'ingredient', 'curry', 'pasta', 'pizza', 'soup', 'chicken', 'fish', 'rice',
+                           'biryani', 'dal', 'paneer', 'bread', 'cake', 'dessert', 'breakfast', 'lunch', 'dinner']
+
+        recipe_phrases = ['recipe for', 'how to cook', 'how to make', 'tell me a recipe',
+                          'find a recipe', 'give me recipe', 'show me recipe', 'cooking recipe',
+                          'food recipe', 'recipe suggestion', 'cooking idea', 'what to cook',
+                          'random recipe', 'suggest recipe', 'recipe idea', 'cooking suggestion']
+
+        # If it contains recipe phrases OR multiple recipe keywords, handle as recipe
+        has_recipe_phrase = any(phrase in text_normalized for phrase in recipe_phrases)
+        recipe_keyword_count = sum(1 for keyword in recipe_keywords if keyword in text_normalized)
+
+        if has_recipe_phrase or recipe_keyword_count >= 2:
+            print(" Recipe request detected - using MealDB instead of Ollama")
+
+            # Check if asking for specific dish
+            if any(phrase in text_normalized for phrase in
+                   ['recipe for', 'find a recipe', 'how to cook', 'how to make', 'cooking recipe',
+                    'food recipe', 'tell me a recipe', 'show me recipe']):
+
+                # Extract the dish name more carefully
+                dish_name = text_normalized
+
+                # Remove command phrases in order of specificity
+                remove_phrases = [
+                    'tell me a recipe for', 'find a recipe for', 'give me a recipe for',
+                    'show me a recipe for', 'recipe for', 'find recipe for',
+                    'how to cook', 'how to make', 'cooking recipe for', 'food recipe for',
+                    'tell me', 'give me', 'show me', 'find', 'recipe', 'cooking', 'food'
+                ]
+
+                for phrase in remove_phrases:
+                    if phrase in dish_name:
+                        dish_name = dish_name.replace(phrase, '').strip()
+                        break  # Only remove the first match to avoid over-cleaning
+
+                # Clean up extra words
+                dish_name = dish_name.replace(' a ', ' ').replace(' an ', ' ').replace(' the ', ' ')
+                dish_name = ' '.join(dish_name.split())  # Remove extra spaces
+
+                if dish_name and len(dish_name) > 2:
+                    print(f" Searching MealDB for recipe: '{dish_name}'")
+                    recipe = self.search_specific_recipe(dish_name)
+                    self.speak(recipe)
+                else:
+                    print(" No specific dish found, giving random recipe from MealDB")
+                    recipe = self.get_random_recipe()
+                    self.speak(recipe)
+                return True
+
+            else:
+                # Random recipe request
+                print("Random recipe request - using MealDB")
+                recipe = self.get_random_recipe()
+                self.speak(recipe)
+                return True
+
+        # ===================== NEW QUOTE COMMANDS =====================
+        elif any(phrase in text_normalized for phrase in
+                 ['quote', 'inspiration', 'motivate me', 'inspire me', 'daily quote', 'wisdom']):
+            quote = self.get_zen_quote()
+            self.speak(quote)
+            return True
+
+        # Application opening commands
+        elif any(word in text_normalized for word in ['open', 'launch', 'start', 'run']):
+            app_name = text_normalized
+
+            for command_word in ['open', 'launch', 'start', 'run']:
+                app_name = app_name.replace(command_word, '').strip()
+
+            filler_words = ['the', 'application', 'app', 'program', 'software']
+            for word in filler_words:
+                app_name = app_name.replace(word, '').strip()
+
+            if app_name:
+                print(f"🔧 Extracted app name: '{app_name}'")
+                result = self.open_application(app_name)
+                self.speak(result)
+            else:
+                self.speak("Which application would you like me to open?")
+            return True
+
+        # List web apps command
+        elif any(phrase in text_normalized for phrase in
+                 ['list web apps', 'show web apps', 'available web apps', 'what web apps']):
+            web_apps_list = self.get_available_web_apps()
+            self.speak(web_apps_list)
+            return True
+
+        # Writing helper commands
+        elif any(word in text_normalized for word in ['write', 'draft', 'compose', 'create']):
+            if any(word in text_normalized for word in ['email', 'mail']):
+                topic = text_normalized.replace('write', '').replace('email', '').replace('about', '').strip()
+                if not topic:
+                    topic = "general business matter"
+                writing_help = self.help_with_writing("email", topic)
+                self.speak(writing_help)
+                return True
+
+            elif any(word in text_normalized for word in ['poem', 'poetry']):
+                topic = text_normalized.replace('write', '').replace('poem', '').replace('about', '').strip()
+                if not topic:
+                    topic = "life and happiness"
+                writing_help = self.help_with_writing("poem", topic)
+                self.speak(writing_help)
+                return True
+            else:
+                self.speak("Would you like me to write an email or poem?")
+                return True
+
+        # Weather commands
+        elif any(word in text_normalized for word in ['weather', 'temperature', 'climate']):
+            city = self.extract_city_from_text(text_normalized)
+            weather_info = self.get_weather(city)
+            self.speak(weather_info)
+            return True
+
+        # Time commands
+        elif any(word in text_normalized for word in ['time', 'clock', 'date', 'today']):
+            time_info = self.get_current_time()
+            self.speak(time_info)
+            return True
+
+        # Music commands
+        elif any(word in text_normalized for word in ['play', 'music', 'song', 'spotify']):
+            song_query = text
+            remove_words = ['play', 'music', 'song', 'spotify', 'by']
+            for word in remove_words:
+                song_query = song_query.replace(word, '', 1)
+            song_query = song_query.strip()
+
+            if song_query:
+                result = self.play_spotify_song(song_query)
+                self.speak(result)
+            else:
+                self.speak("What song would you like me to play?")
+            return True
+
+        # Translation commands
+        elif any(word in text_normalized for word in ['translate', 'translation']):
+            text_to_translate = ""
+            target_lang = ""
+
+            if ' to ' in text_normalized:
+                parts = text_normalized.split(' to ')
+                text_to_translate = parts[0].replace('translate', '').strip()
+                target_lang = parts[1].strip()
+            elif ' in ' in text_normalized:
+                parts = text_normalized.split(' in ')
+                text_to_translate = parts[0].replace('translate', '').strip()
+                target_lang = parts[1].strip()
+
+            language_map = {
+                'hindi': 'Hindi', 'tamil': 'Tamil', 'kannada': 'Kannada',
+                'telugu': 'Telugu', 'marathi': 'Marathi', 'bengali': 'Bengali'
+            }
+
+            target_lang = language_map.get(target_lang.lower(), target_lang.title())
+
+            if text_to_translate and target_lang:
+                translation = self.translate_text(text_to_translate, target_lang)
+                self.speak(translation)
+            else:
+                self.speak("Please say: translate good morning to Tamil")
+            return True
+
+        # Screenshot commands
+        elif any(word in text_normalized for word in ['screenshot', 'capture screen', 'take picture']):
+            result = self.take_screenshot()
+            self.speak(result)
+            return True
+
+        # System statistics commands
+        elif any(word in text_normalized for word in ['system stats', 'cpu usage', 'memory usage', 'performance']):
+            stats = self.get_system_stats()
+            self.speak(stats)
+            return True
+
+        # File operations commands
+        elif any(word in text_normalized for word in ['desktop files', 'list files', 'what files']):
+            files = self.list_desktop_files()
+            self.speak(files)
+            return True
+
+        # Stock commands
+        elif any(word in text_normalized for word in ['stock', 'share', 'nifty', 'reliance', 'tcs', 'infosys']):
+            stock_info = self.get_stock_price(text_normalized)
+            self.speak(stock_info)
+            return True
+
+        # Currency commands
+        elif any(word in text_normalized for word in ['currency', 'dollar', 'rupee']):
+            currency_info = self.get_currency_rate('USD', 'INR')
+            self.speak(currency_info)
+            return True
+
+        # Volume commands
+        elif any(word in text_normalized for word in ['volume', 'sound']):
+            if any(word in text_normalized for word in ['up', 'increase', 'louder']):
+                result = self.control_volume("up")
+            elif any(word in text_normalized for word in ['down', 'decrease', 'lower']):
+                result = self.control_volume("down")
+            elif any(word in text_normalized for word in ['mute', 'silence']):
+                result = self.control_volume("mute")
+            else:
+                result = "Say volume up, down, or mute"
+            self.speak(result)
+            return True
+
+        # Battery commands
+        elif any(word in text_normalized for word in ['battery', 'power level']):
+            battery_info = self.get_battery_status()
+            self.speak(battery_info)
+            return True
+
+        # Network commands
+        elif any(word in text_normalized for word in ['ip address', 'network info']):
+            network_info = self.get_network_info()
+            self.speak(network_info)
+            return True
+
+        # News commands
+        elif any(word in text_normalized for word in ['news', 'headlines']):
+            news = self.get_news_headlines()
+            self.speak(news)
+            return True
+
+        return False
+
+    def speak(self, text):
+        """Convert text to speech"""
+        print(f"Dennis: {text}")
+        self.tts_engine.say(text)
+        self.tts_engine.runAndWait()
+
+    def listen(self, timeout=5):
+        """Listen for voice input with improved settings for Indian accents"""
+        try:
+            with self.microphone as source:
+                print("Listening... (speak clearly and loudly)")
+                self.recognizer.adjust_for_ambient_noise(source, duration=1.5)
+                print(" Ready - speak now!")
+
+                audio = self.recognizer.listen(source, timeout=timeout, phrase_time_limit=10)
+
+            print(" Processing your speech...")
+
+            recognition_attempts = [
+                ("en-IN", "Indian English"),
+                ("en-US", "US English"),
+                ("en-GB", "British English")
+            ]
+
+            for lang_code, lang_name in recognition_attempts:
+                try:
+                    text = self.recognizer.recognize_google(audio, language=lang_code)
+                    print(f"You said ({lang_name}): {text}")
+                    return text
+                except sr.UnknownValueError:
+                    print(f" {lang_name} recognition failed, trying next...")
+                    continue
+
+            print(" Could not understand audio with any language model")
+            print(" Try speaking: LOUDER, SLOWER, and CLEARER")
+            print(" Or try simpler words like: 'weather', 'time', 'battery'")
+            return None
+
+        except sr.RequestError as e:
+            print(f" Speech recognition service error: {e}")
+            print(" Check your internet connection")
+            return None
+        except sr.WaitTimeoutError:
+            print(" No speech detected - try speaking louder")
+            return None
+        except Exception as e:
+            print(f" Unexpected error: {e}")
+            return None
+
+    def wait_for_wake_word(self):
+        """Listen for wake word 'hello dennis' with improved recognition"""
+        print(" Say 'hello dennis' to wake me up... (speak clearly and loudly)")
+
+        while True:
+            try:
+                text = self.listen(timeout=3)
+
+                if text and any(phrase in text.lower() for phrase in ['hello dennis', 'hey dennis', 'dennis']):
+                    print(" Wake word detected!")
+                    self.speak("Yes, how can I help you?")
+                    return True
+
+            except KeyboardInterrupt:
+                print("Shutting down...")
+                return False
+            except Exception as e:
+                print(f"Error: {e}")
+                time.sleep(1)
+
+    def conversation_loop(self):
+        """Main conversation loop with better timeout handling"""
+        conversation_timeout = 0
+        max_timeout = 4
+
+        self.speak(
+            "I'm ready! I can open web apps like Gmail and YouTube, desktop apps, check weather, give you recipes and quotes, take screenshots, and much more!")
+
+        while conversation_timeout < max_timeout:
+            print("\n" + "=" * 50)
+            print("What's your question?")
+            print(
+                " TIPS: 'open gmail', 'random recipe', 'inspire me', 'weather in New York', 'screenshot', 'list web apps'")
+
+            text = self.listen(timeout=12)
+
+            if not text:
+                conversation_timeout += 1
+                if conversation_timeout < max_timeout:
+                    encouragement = [
+                        "I'm still listening. Try speaking louder!",
+                        "Please try again - I can give you recipes, quotes, open apps, and more!",
+                        "Let's try once more - say 'random recipe' or 'inspire me'",
+                        "I'm here! Try: 'open calculator' or 'give me a quote'"
+                    ]
+                    self.speak(encouragement[conversation_timeout - 1])
+                continue
+
+            conversation_timeout = 0
+
+            if any(word in text.lower() for word in ['goodbye', 'bye', 'stop', 'exit', 'sleep', 'quit']):
+                self.speak("Goodbye! Say hello dennis to wake me up again.")
+                return
+
+            if self.handle_real_time_commands(text):
+                continue
+
+            self.speak("Let me think about that...")
+            response = self.query_ollama(text)
+            self.speak(response)
+
+        self.speak("I'm going back to sleep mode. Say hello dennis to wake me up.")
+
+    def run(self):
+        """Main run loop"""
+        print("DENNIS - Your Personal Voice Assistant Started!")
+        print("Web applications support: Gmail, YouTube, Netflix and more!")
+        print(" NEW: Random recipe suggestions!")
+        print(" NEW: Daily inspirational quotes!")
+        print("Wake word: 'Hello Dennis'")
+        print("Can open almost any application on your system!")
+        print("Press Ctrl+C to exit")
+
+        if self.check_ollama_connection():
+            print("Connected to Ollama server!")
+            self.speak("Dennis ready with recipe and quote features. Say hello dennis to begin.")
+        else:
+            print("Warning: Cannot connect to Ollama. Make sure 'ollama serve' is running.")
+            self.speak("Warning: Ollama server not detected. Please start Ollama first.")
+
+        try:
+            while True:
+                if self.wait_for_wake_word():
+                    self.conversation_loop()
+                else:
+                    break
+        except KeyboardInterrupt:
+            print("\nShutting down...")
+            self.speak("Goodbye!")
+
+    def test_commands_directly(self):
+        """Test commands directly without wake word"""
+        print("\n DIRECT COMMAND TESTING MODE")
+        print("Testing commands without wake word...")
+
+        test_commands = [
+            "open gmail",
+            "open youtube",
+            "random recipe",
+            "inspire me",
+            "open spotify",
+            "open facebook",
+            "open netflix",
+            "open calculator",
+            "weather in New York",
+            "list web apps"
+        ]
+
+        for command in test_commands:
+            print(f"\n Testing command: '{command}'")
+            if self.handle_real_time_commands(command):
+                print(" Command executed successfully")
+            else:
+                print(" Command not recognized, sending to Ollama...")
+                response = self.query_ollama(command)
+                self.speak(response)
+
+
+def test_components():
+    """Test voice and Ollama components"""
+    print("Testing Components...")
+    print("=" * 30)
+
+    try:
+        r = sr.Recognizer()
+        m = sr.Microphone()
+        print(" Speech recognition working")
+    except Exception as e:
+        print(f" Speech recognition error: {e}")
+        return False
+
+    try:
+        engine = pyttsx3.init()
+        print(" Text-to-speech working")
+    except Exception as e:
+        print(f" Text-to-speech error: {e}")
+        return False
+
+    try:
+        response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        if response.status_code == 200:
+            print("✓ Ollama server connected")
+        else:
+            print("✗ Ollama server not responding")
+            return False
+    except Exception as e:
+        print(f"✗ Ollama connection failed: {e}")
+        print("  Make sure to run 'ollama serve' first")
+        return False
+
+    print("\nAll components ready!")
+    return True
+
+
+if __name__ == "__main__":
+    print("DENNIS - YOUR UNIVERSAL VOICE ASSISTANT")
+    print("=" * 40)
+    print(" Can open almost ANY application on your system!")
+    print(" Opens web applications like Gmail, YouTube, Netflix in browser!")
+    print(" NEW: Get random recipe suggestions!")
+    print(" NEW: Daily inspirational quotes and motivation!")
+    print(" Complete system control and AI features")
+
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--test":
+        print("\n RUNNING IN TEST MODE...")
+        assistant = VoiceOllamaAssistant()
+        assistant.test_commands_directly()
+        sys.exit()
+
+    if test_components():
+        print("\nStarting DENNIS...")
+        time.sleep(1)
+
+        assistant = VoiceOllamaAssistant()
+        assistant.run()
+    else:
+        print("\nPlease fix the issues above before running.")
+        print("\nSetup checklist:")
+        print("1. Install: pip install speechrecognition pyttsx3 requests pyaudio")
+        print("2. Install: pip install psutil pillow (for system features)")
+        print("3. Install Ollama and run: ollama serve")
+        print("4. Run: ollama pull llama3.2:1b")
+        print("\n DENNIS can now open almost any application installed on your system!")
+        print(" PLUS: Opens web apps like Gmail, YouTube, Netflix in your browser!")
+        print(" NEW: Ask for 'random recipe' to get cooking ideas!")
+        print(" NEW: Say 'inspire me' or 'quote' for daily motivation!")
+        print("\n TROUBLESHOOTING:")
+        print("   - If wake word fails: python script.py --test")
+        print("   - This will test commands directly")
+        print("\n COMMAND EXAMPLES:")
+        print("   - 'open gmail' - Opens Gmail in browser")
+        print("   - 'random recipe' - Get a cooking suggestion")
+        print("   - 'inspire me' - Get an inspirational quote")
+        print("   - 'open youtube' - Opens YouTube in browser")
+        print("   - 'open netflix' - Opens Netflix in browser")
+        print("   - 'weather in New York' - Gets weather for any city")
+        print("   - 'list web apps' - Shows all available web apps")
