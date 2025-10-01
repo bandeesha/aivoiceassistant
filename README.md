@@ -1,8 +1,6 @@
 
 <p align="center"><h1 align="center">AIVOICEASSISTANT</h1></p>
-<p align="center">
-	<em><code>❯ REPLACE-ME</code></em>
-</p>
+
 ##  Table of Contents
 
 - [ Overview](#-overview)
@@ -12,8 +10,6 @@
   - [ Prerequisites](#-prerequisites)
   - [ Installation](#-installation)
   - [ Usage](#-usage)
-- [ Project Roadmap](#-project-roadmap)
-- [ Contributing](#-contributing)
 - [ Acknowledgments](#-acknowledgments)
 
 ---
@@ -87,9 +83,9 @@ Install aivoiceassistant using one of the following methods:
 
 ###  Usage
 Run aivoiceassistant using the following command:
-echo 'python3 ai_voice_assistant.py'
-
----
+```sh
+python3 ai_voice_assistant.py
+```
 
 ##  Contributing
 
